@@ -7,6 +7,8 @@ type Props = {
   presupuesto: Presupuesto | null;
   cerrar: () => void;
   editar: (presupuesto: Presupuesto) => void;
+  /** Se llama cuando el presupuesto se convierte en pedido. */
+  alConvertir?: (numeroPedido: string) => void;
 };
 
 /* ==========================================================
@@ -17,6 +19,7 @@ export default function BudgetDetailPanel({
   presupuesto,
   cerrar,
   editar,
+  alConvertir,
 }: Props) {
   if (!presupuesto) {
     return null;
@@ -28,6 +31,7 @@ export default function BudgetDetailPanel({
       presupuesto={presupuesto}
       cerrar={cerrar}
       editar={editar}
+      alConvertir={alConvertir}
     />
   );
 }
@@ -40,10 +44,12 @@ function BudgetDetailContent({
   presupuesto,
   cerrar,
   editar,
+  alConvertir,
 }: {
   presupuesto: Presupuesto;
   cerrar: () => void;
   editar: (presupuesto: Presupuesto) => void;
+  alConvertir?: (numeroPedido: string) => void;
 }) {
   const [mostrarEmail, setMostrarEmail] = useState(false);
 
@@ -57,6 +63,64 @@ function BudgetDetailContent({
   const [enviando, setEnviando] = useState(false);
   const [mensajeExito, setMensajeExito] = useState("");
   const [mensajeError, setMensajeError] = useState("");
+
+  /* ==========================================================
+     CONVERTIR EN PEDIDO
+  ==========================================================
+     El número lo genera el backend (SerieService) dentro
+     de su propia transacción. Aquí no se envía "numero".
+  ========================================================== */
+
+  const [convirtiendo, setConvirtiendo] = useState(false);
+  const [errorPedido, setErrorPedido] = useState("");
+  const [numeroPedido, setNumeroPedido] = useState("");
+
+  async function convertirEnPedido() {
+    setConvirtiendo(true);
+    setErrorPedido("");
+    setMensajeExito("");
+    setMensajeError("");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/presupuestos/${presupuesto.id}/convertir-en-pedido`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            fecha: new Date().toISOString().split("T")[0],
+            estado: "Pendiente",
+          }),
+        },
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ||
+            "No se ha podido convertir el presupuesto en pedido.",
+        );
+      }
+
+      const numero = data?.numero || "";
+
+      setNumeroPedido(numero);
+
+      alConvertir?.(numero);
+    } catch (error) {
+      setErrorPedido(
+        error instanceof Error
+          ? error.message
+          : "Ha ocurrido un error al crear el pedido.",
+      );
+    } finally {
+      setConvirtiendo(false);
+    }
+  }
 
   /* ==========================================================
      DESCARGAR PDF
@@ -304,18 +368,55 @@ function BudgetDetailContent({
           </div>
 
           {/* =====================================================
-              PRESUPUESTO ACEPTADO
+              PRESUPUESTO ACEPTADO → CREAR PEDIDO
           ===================================================== */}
 
           {presupuesto.estado === "Aceptado" && (
             <div className="mt-5 rounded-xl border border-[#0F766E]/20 bg-[#BFEDE7]/50 p-4">
-              <p className="text-sm font-bold text-[#0F766E]">
-                Presupuesto aceptado
-              </p>
+              {numeroPedido ? (
+                <>
+                  <p className="text-sm font-bold text-[#0F766E]">
+                    Pedido creado correctamente
+                  </p>
 
-              <p className="mt-1 text-xs text-slate-600">
-                Este presupuesto está preparado para convertirse en pedido.
-              </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Este presupuesto se ha convertido en el pedido{" "}
+                    <span className="font-semibold text-[#0F766E]">
+                      {numeroPedido}
+                    </span>
+                    . Puedes consultarlo en el módulo de Pedidos.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-bold text-[#0F766E]">
+                    Presupuesto aceptado
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-600">
+                    Este presupuesto está preparado para convertirse en pedido.
+                  </p>
+
+                  {errorPedido && (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                      <p className="text-xs font-semibold text-red-700">
+                        {errorPedido}
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={convertirEnPedido}
+                    disabled={convirtiendo}
+                    className="mt-3 w-full rounded-xl bg-[#0F766E] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#115E59] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {convirtiendo
+                      ? "Creando pedido..."
+                      : "Convertir en pedido"}
+                  </button>
+                </>
+              )}
             </div>
           )}
 

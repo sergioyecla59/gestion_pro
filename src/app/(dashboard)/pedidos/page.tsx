@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import NewOrderPanel, {
   EstadoPedido,
@@ -10,214 +10,334 @@ import NewOrderPanel, {
 
 import OrderDetailPanel from "@/components/pedidos/OrderDetailPanel";
 
-const pedidosIniciales: Pedido[] = [
-  {
-    id: 1,
-    numero: "PED-2026-001",
-    cliente: "Muebles García",
-    fecha: "24/09/2026",
-    estado: "Preparando",
-    origen: "PRE-2026-001",
-    lineas: [
-      {
-        id: 1,
-        producto: "Colchón Premium Visco",
-        referencia: "COL-001",
-        cantidad: 2,
-        precio: 499,
-      },
-    ],
-    subtotal: 998,
-    iva: 209.58,
-    total: 1207.58,
-  },
-  {
-    id: 2,
-    numero: "PED-2026-002",
-    cliente: "Sofás Martínez",
-    fecha: "23/09/2026",
-    estado: "Pendiente",
-    origen: "Pedido manual",
-    lineas: [
-      {
-        id: 2,
-        producto: "Canapé Abatible",
-        referencia: "CAN-001",
-        cantidad: 2,
-        precio: 349,
-      },
-    ],
-    subtotal: 698,
-    iva: 146.58,
-    total: 844.58,
-  },
-  {
-    id: 3,
-    numero: "PED-2026-003",
-    cliente: "Descanso Levante",
-    fecha: "21/09/2026",
-    estado: "Enviado",
-    origen: "PRE-2026-003",
-    lineas: [
-      {
-        id: 3,
-        producto: "Almohada Viscoelástica",
-        referencia: "ALM-001",
-        cantidad: 10,
-        precio: 59.9,
-      },
-    ],
-    subtotal: 599,
-    iva: 125.79,
-    total: 724.79,
-  },
-];
+/* ==========================================================
+   TIPOS DE LA API
+========================================================== */
+
+type ClienteApi = {
+  id: number;
+  nombre: string;
+};
+
+type LineaApi = {
+  id: number;
+  producto_id: number | null;
+  descripcion: string;
+  cantidad: string | number;
+  precio_unitario: string | number;
+  porcentaje_iva: string | number;
+  subtotal: string | number;
+  producto?: {
+    id: number;
+    referencia: string;
+    nombre: string;
+  } | null;
+};
+
+type PedidoApi = {
+  id: number;
+  numero: string;
+  cliente_id: number;
+  fecha: string;
+  estado: string;
+  origen: string | null;
+  subtotal: string | number;
+  iva: string | number;
+  total: string | number;
+  cliente?: ClienteApi | null;
+  lineas: LineaApi[];
+};
+
+/* ==========================================================
+   ADAPTADOR API -> UI
+========================================================== */
+
+function formatearFecha(fecha: string) {
+  const soloFecha = fecha.split("T")[0];
+
+  const partes = soloFecha.split("-");
+
+  if (partes.length !== 3) {
+    return fecha;
+  }
+
+  return partes[2] + "/" + partes[1] + "/" + partes[0];
+}
+
+function adaptarPedido(pedido: PedidoApi): Pedido {
+  const cliente = pedido.cliente;
+  const lineas = pedido.lineas || [];
+
+  return {
+    id: pedido.id,
+    numero: pedido.numero,
+    clienteId: pedido.cliente_id,
+    cliente: cliente ? cliente.nombre : "Sin cliente",
+    fecha: formatearFecha(pedido.fecha),
+    estado: pedido.estado as EstadoPedido,
+    origen: pedido.origen || "",
+    lineas: lineas.map((linea) => {
+      const producto = linea.producto;
+      return {
+        id: linea.id,
+        productoId: linea.producto_id || 0,
+        producto: producto ? producto.nombre : linea.descripcion,
+        referencia: producto ? producto.referencia : "",
+        cantidad: Number(linea.cantidad),
+        precio: Number(linea.precio_unitario),
+      };
+    }),
+    subtotal: Number(pedido.subtotal),
+    iva: Number(pedido.iva),
+    total: Number(pedido.total),
+  };
+}
+
+/* ==========================================================
+   PÁGINA
+========================================================== */
 
 export default function PedidosPage() {
-  const [pedidos, setPedidos] =
-    useState<Pedido[]>(pedidosIniciales);
+  const [pedidos, setPedidos] = useState<Pedido[]>([]);
 
-  const [busqueda, setBusqueda] =
-    useState("");
+  const [busqueda, setBusqueda] = useState("");
 
-  const [filtroEstado, setFiltroEstado] =
-    useState("Todos");
+  const [filtroEstado, setFiltroEstado] = useState("Todos");
 
-  const [panelAbierto, setPanelAbierto] =
-    useState(false);
+  const [panelAbierto, setPanelAbierto] = useState(false);
 
-  const [
-    pedidoSeleccionado,
-    setPedidoSeleccionado,
-  ] = useState<Pedido | null>(null);
+  const [pedidoSeleccionado, setPedidoSeleccionado] =
+    useState<Pedido | null>(null);
+
+  const [cargando, setCargando] = useState(true);
+
+  const [error, setError] = useState("");
+
+  /* ==========================================================
+     CARGAR PEDIDOS
+  ========================================================== */
+
+  const cargarPedidos = useCallback(async () => {
+    try {
+      setCargando(true);
+      setError("");
+
+      const respuesta = await fetch("http://127.0.0.1:8000/api/pedidos");
+
+      if (!respuesta.ok) {
+        throw new Error("No se pudieron cargar los pedidos.");
+      }
+
+      const datos: PedidoApi[] = await respuesta.json();
+
+      setPedidos(datos.map(adaptarPedido));
+    } catch (err) {
+      console.error(err);
+
+      setError("No se pudieron cargar los pedidos.");
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelado = false;
+
+    async function iniciarCarga() {
+      if (cancelado) return;
+
+      await cargarPedidos();
+    }
+
+    iniciarCarga();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [cargarPedidos]);
 
   /* ==========================================================
      FILTRAR
   ========================================================== */
 
-  const pedidosFiltrados = pedidos.filter(
-    (pedido) => {
-      const texto = busqueda.toLowerCase();
+  const pedidosFiltrados = pedidos.filter((pedido) => {
+    const texto = busqueda.toLowerCase();
 
-      const coincideBusqueda =
-        pedido.numero
-          .toLowerCase()
-          .includes(texto) ||
-        pedido.cliente
-          .toLowerCase()
-          .includes(texto) ||
-        pedido.origen
-          .toLowerCase()
-          .includes(texto);
+    const coincideBusqueda =
+      pedido.numero.toLowerCase().includes(texto) ||
+      pedido.cliente.toLowerCase().includes(texto) ||
+      pedido.origen.toLowerCase().includes(texto);
 
-      const coincideEstado =
-        filtroEstado === "Todos" ||
-        pedido.estado === filtroEstado;
+    const coincideEstado =
+      filtroEstado === "Todos" || pedido.estado === filtroEstado;
 
-      return coincideBusqueda && coincideEstado;
-    }
-  );
+    return coincideBusqueda && coincideEstado;
+  });
 
   /* ==========================================================
      CREAR
   ========================================================== */
 
-  function guardarPedido(
-    nuevoPedido: NuevoPedido
-  ) {
-    const subtotal =
-      nuevoPedido.lineas.reduce(
-        (total, linea) =>
-          total +
-          linea.precio * linea.cantidad,
-        0
-      );
+  async function guardarPedido(nuevoPedido: NuevoPedido): Promise<boolean> {
+    try {
+      setError("");
 
-    const iva = subtotal * 0.21;
-    const total = subtotal + iva;
+      const lineas = nuevoPedido.lineas.map((linea) => {
+        return {
+          producto_id: linea.productoId,
+          descripcion: linea.producto,
+          cantidad: linea.cantidad,
+          precio_unitario: linea.precio,
+          porcentaje_iva: 21,
+        };
+      });
 
-    const siguienteNumero =
-      pedidos.length + 1;
+      const respuesta = await fetch("http://127.0.0.1:8000/api/pedidos", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          empresa_id: 1,
+          cliente_id: nuevoPedido.clienteId,
+          fecha: new Date().toISOString().split("T")[0],
+          origen: nuevoPedido.origen,
+          estado: nuevoPedido.estado,
+          lineas: lineas,
+        }),
+      });
 
-    const pedido: Pedido = {
-      id: Date.now(),
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => null);
 
-      numero: `PED-2026-${String(
-        siguienteNumero
-      ).padStart(3, "0")}`,
+        console.error(detalle);
 
-      fecha: new Date().toLocaleDateString(
-        "es-ES"
-      ),
+        setError("No se pudo guardar el pedido. Revisa los datos.");
 
-      ...nuevoPedido,
+        return false;
+      }
 
-      subtotal,
-      iva,
-      total,
-    };
+      await cargarPedidos();
 
-    setPedidos((actuales) => [
-      pedido,
-      ...actuales,
-    ]);
+      return true;
+    } catch (err) {
+      console.error(err);
+
+      setError("Ha ocurrido un error al guardar el pedido.");
+
+      return false;
+    }
   }
 
   /* ==========================================================
      CAMBIAR ESTADO
   ========================================================== */
 
-  function cambiarEstado(
-    id: number,
-    estado: EstadoPedido
-  ) {
-    setPedidos((actuales) =>
-      actuales.map((pedido) =>
-        pedido.id === id
-          ? {
-              ...pedido,
-              estado,
-            }
-          : pedido
-      )
-    );
+  async function cambiarEstado(id: number, estado: EstadoPedido) {
+    try {
+      const respuesta = await fetch(
+        "http://127.0.0.1:8000/api/pedidos/" + id + "/estado",
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ estado: estado }),
+        }
+      );
 
-    setPedidoSeleccionado((actual) =>
-      actual && actual.id === id
-        ? {
-            ...actual,
-            estado,
-          }
-        : actual
-    );
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => null);
+
+        throw new Error(
+          detalle ? detalle.message : "No se pudo cambiar el estado."
+        );
+      }
+
+      setPedidos((actuales) =>
+        actuales.map((pedido) =>
+          pedido.id === id ? { ...pedido, estado: estado } : pedido
+        )
+      );
+
+      setPedidoSeleccionado((actual) =>
+        actual && actual.id === id ? { ...actual, estado: estado } : actual
+      );
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No se pudo cambiar el estado del pedido."
+      );
+    }
   }
 
   /* ==========================================================
      ELIMINAR
   ========================================================== */
 
-  function eliminarPedido(id: number) {
+  async function eliminarPedido(id: number) {
     const confirmado = window.confirm(
       "¿Seguro que quieres eliminar este pedido?"
     );
 
     if (!confirmado) return;
 
-    setPedidos((actuales) =>
-      actuales.filter(
-        (pedido) => pedido.id !== id
-      )
-    );
+    try {
+      setError("");
+
+      const respuesta = await fetch(
+        "http://127.0.0.1:8000/api/pedidos/" + id,
+        {
+          method: "DELETE",
+          headers: { Accept: "application/json" },
+        }
+      );
+
+      if (!respuesta.ok) {
+        const detalle = await respuesta.json().catch(() => null);
+
+        throw new Error(
+          detalle ? detalle.message : "No se pudo eliminar el pedido."
+        );
+      }
+
+      setPedidos((actuales) => actuales.filter((pedido) => pedido.id !== id));
+
+      setPedidoSeleccionado((actual) =>
+        actual && actual.id === id ? null : actual
+      );
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err instanceof Error ? err.message : "No se pudo eliminar el pedido."
+      );
+    }
   }
 
+  /* ==========================================================
+     RENDER
+  ========================================================== */
+
+  const columnas = [
+    "Número",
+    "Cliente",
+    "Fecha",
+    "Origen",
+    "Total",
+    "Estado",
+    "Acciones",
+  ];
+
   return (
-    <>
-      {/* CABECERA */}
-
+    <div>
       <section className="flex items-end justify-between">
-
         <div>
-
           <p className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-[#5EEAD4]">
             Ventas
           </p>
@@ -229,253 +349,185 @@ export default function PedidosPage() {
           <p className="mt-1 text-sm text-slate-400">
             Gestiona los pedidos y su proceso de preparación y entrega.
           </p>
-
         </div>
 
         <button
-          onClick={() =>
-            setPanelAbierto(true)
-          }
+          onClick={() => setPanelAbierto(true)}
           className="rounded-xl bg-[#0F766E] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#115E59]"
         >
           + Nuevo pedido
         </button>
-
       </section>
 
-      {/* TABLA */}
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-200">
+          {error}
+        </div>
+      ) : null}
 
       <section className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#E8ECEC] shadow-xl shadow-black/10">
-
-        {/* BUSCADOR */}
-
         <div className="flex items-center justify-between gap-4 border-b border-slate-300 p-5">
-
           <div className="relative w-full max-w-sm">
-
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
               ⌕
             </span>
 
             <input
               value={busqueda}
-              onChange={(event) =>
-                setBusqueda(event.target.value)
-              }
+              onChange={(evento) => setBusqueda(evento.target.value)}
               placeholder="Buscar pedido, cliente..."
               className="h-10 w-full rounded-xl border border-slate-300 bg-[#F5F7F7] pl-11 pr-4 text-sm text-slate-800 outline-none focus:border-[#0F766E]"
             />
-
           </div>
 
           <select
             value={filtroEstado}
-            onChange={(event) =>
-              setFiltroEstado(
-                event.target.value
-              )
-            }
+            onChange={(evento) => setFiltroEstado(evento.target.value)}
             className="rounded-xl border border-slate-300 bg-[#F5F7F7] px-4 py-2.5 text-sm font-medium text-slate-600 outline-none focus:border-[#0F766E]"
           >
-
-            <option value="Todos">
-              Todos los estados
-            </option>
-
-            <option value="Pendiente">
-              Pendientes
-            </option>
-
-            <option value="Preparando">
-              Preparando
-            </option>
-
-            <option value="Enviado">
-              Enviados
-            </option>
-
-            <option value="Completado">
-              Completados
-            </option>
-
-            <option value="Cancelado">
-              Cancelados
-            </option>
-
+            <option value="Todos">Todos los estados</option>
+            <option value="Pendiente">Pendientes</option>
+            <option value="Preparando">Preparando</option>
+            <option value="Enviado">Enviados</option>
+            <option value="Completado">Completados</option>
+            <option value="Anulado">Anulados</option>
           </select>
-
         </div>
 
-        {/* TABLA */}
-
         <div className="overflow-x-auto">
-
           <table className="w-full">
-
             <thead>
-
               <tr className="border-b border-slate-300 bg-[#DDE2E2] text-left">
-
-                {[
-                  "Número",
-                  "Cliente",
-                  "Fecha",
-                  "Origen",
-                  "Total",
-                  "Estado",
-                  "Acciones",
-                ].map((titulo) => (
-
+                {columnas.map((titulo) => (
                   <th
                     key={titulo}
                     className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 last:text-right"
                   >
                     {titulo}
                   </th>
-
                 ))}
-
               </tr>
-
             </thead>
 
             <tbody>
-
-              {pedidosFiltrados.map(
-                (pedido) => (
-
-                  <tr
-                    key={pedido.id}
-                    className="border-b border-slate-300/70 transition last:border-0 hover:bg-[#F5F7F7]"
+              {cargando ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-5 py-8 text-center text-sm text-slate-500"
                   >
+                    Cargando pedidos...
+                  </td>
+                </tr>
+              ) : null}
 
-                    <td className="px-5 py-4 text-sm font-bold text-[#0F766E]">
-                      {pedido.numero}
-                    </td>
+              {!cargando && pedidosFiltrados.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-5 py-8 text-center text-sm text-slate-500"
+                  >
+                    No hay pedidos que mostrar.
+                  </td>
+                </tr>
+              ) : null}
 
-                    <td className="px-5 py-4 text-sm font-semibold text-[#1C2526]">
-                      {pedido.cliente}
-                    </td>
+              {!cargando
+                ? pedidosFiltrados.map((pedido) => (
+                    <tr
+                      key={pedido.id}
+                      className="border-b border-slate-300/70 transition last:border-0 hover:bg-[#F5F7F7]"
+                    >
+                      <td className="px-5 py-4 text-sm font-bold text-[#0F766E]">
+                        {pedido.numero}
+                      </td>
 
-                    <td className="px-5 py-4 text-sm text-slate-600">
-                      {pedido.fecha}
-                    </td>
+                      <td className="px-5 py-4 text-sm font-semibold text-[#1C2526]">
+                        {pedido.cliente}
+                      </td>
 
-                    <td className="px-5 py-4 text-sm text-slate-600">
-                      {pedido.origen}
-                    </td>
+                      <td className="px-5 py-4 text-sm text-slate-600">
+                        {pedido.fecha}
+                      </td>
 
-                    <td className="px-5 py-4 text-sm font-bold text-slate-700">
-                      {formatearDinero(
-                        pedido.total
-                      )}
-                    </td>
+                      <td className="px-5 py-4 text-sm text-slate-600">
+                        {pedido.origen}
+                      </td>
 
-                    <td className="px-5 py-4">
-                      <Estado
-                        estado={pedido.estado}
-                      />
-                    </td>
+                      <td className="px-5 py-4 text-sm font-bold text-slate-700">
+                        {formatearDinero(pedido.total)}
+                      </td>
 
-                    <td className="px-5 py-4 text-right">
+                      <td className="px-5 py-4">
+                        <Estado estado={pedido.estado} />
+                      </td>
 
-                      <button
-                        onClick={() =>
-                          setPedidoSeleccionado(
-                            pedido
-                          )
-                        }
-                        className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[#0F766E] transition hover:bg-[#BFEDE7]"
-                      >
-                        Ver
-                      </button>
+                      <td className="px-5 py-4 text-right">
+                        <button
+                          onClick={() => setPedidoSeleccionado(pedido)}
+                          className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[#0F766E] transition hover:bg-[#BFEDE7]"
+                        >
+                          Ver
+                        </button>
 
-                      <button
-                        onClick={() =>
-                          eliminarPedido(
-                            pedido.id
-                          )
-                        }
-                        className="rounded-lg px-3 py-1.5 text-sm font-semibold text-red-500 transition hover:bg-red-50"
-                      >
-                        Eliminar
-                      </button>
-
-                    </td>
-
-                  </tr>
-
-                )
-              )}
-
+                        {pedido.estado !== "Anulado" ? (
+                          <button
+                            onClick={() => eliminarPedido(pedido.id)}
+                            className="rounded-lg px-3 py-1.5 text-sm font-semibold text-red-500 transition hover:bg-red-50"
+                          >
+                            Eliminar
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))
+                : null}
             </tbody>
-
           </table>
-
         </div>
-
-        {/* PIE */}
 
         <div className="border-t border-slate-300 px-5 py-4">
-
           <p className="text-xs text-slate-500">
-            Mostrando{" "}
-            {pedidosFiltrados.length} de{" "}
-            {pedidos.length} pedidos
+            Mostrando {pedidosFiltrados.length} de {pedidos.length} pedidos
           </p>
-
         </div>
-
       </section>
-
-      {/* VER PEDIDO */}
 
       <OrderDetailPanel
         pedido={pedidoSeleccionado}
-        cerrar={() =>
-          setPedidoSeleccionado(null)
-        }
+        cerrar={() => setPedidoSeleccionado(null)}
         cambiarEstado={cambiarEstado}
+        alCrearAlbaran={() => {
+          cargarPedidos();
+          setPedidoSeleccionado(null);
+        }}
+        alAnular={() => {
+          cargarPedidos();
+          setPedidoSeleccionado(null);
+        }}
       />
 
-      {/* NUEVO PEDIDO */}
-
-      {panelAbierto && (
+      {panelAbierto ? (
         <NewOrderPanel
-          cerrar={() =>
-            setPanelAbierto(false)
-          }
+          cerrar={() => setPanelAbierto(false)}
           guardar={guardarPedido}
         />
-      )}
-
-    </>
+      ) : null}
+    </div>
   );
 }
 
-function Estado({
-  estado,
-}: {
-  estado: EstadoPedido;
-}) {
-  const estilos: Record<
-    EstadoPedido,
-    string
-  > = {
-    Pendiente:
-      "bg-amber-100 text-amber-700",
+/* ==========================================================
+   ESTADO
+========================================================== */
 
-    Preparando:
-      "bg-blue-100 text-blue-700",
-
-    Enviado:
-      "bg-violet-100 text-violet-700",
-
-    Completado:
-      "bg-emerald-100 text-emerald-700",
-
-    Cancelado:
-      "bg-red-100 text-red-700",
+function Estado({ estado }: { estado: EstadoPedido }) {
+  const estilos: Record<EstadoPedido, string> = {
+    Pendiente: "bg-amber-100 text-amber-700",
+    Preparando: "bg-blue-100 text-blue-700",
+    Enviado: "bg-violet-100 text-violet-700",
+    Completado: "bg-emerald-100 text-emerald-700",
+    Anulado: "bg-slate-200 text-slate-600",
   };
 
   return (
@@ -487,14 +539,15 @@ function Estado({
   );
 }
 
-function formatearDinero(
-  cantidad: number
-) {
-  return `${cantidad.toLocaleString(
-    "es-ES",
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }
-  )} €`;
+/* ==========================================================
+   FORMATEAR DINERO
+========================================================== */
+
+function formatearDinero(cantidad: number) {
+  const numero = cantidad.toLocaleString("es-ES", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  return numero + " €";
 }

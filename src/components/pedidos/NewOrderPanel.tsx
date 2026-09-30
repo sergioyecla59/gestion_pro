@@ -1,9 +1,14 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+
+/* ==========================================================
+   TIPOS
+========================================================== */
 
 export type LineaPedido = {
   id: number;
+  productoId: number;
   producto: string;
   referencia: string;
   cantidad: number;
@@ -15,11 +20,12 @@ export type EstadoPedido =
   | "Preparando"
   | "Enviado"
   | "Completado"
-  | "Cancelado";
+  | "Anulado";
 
 export type Pedido = {
   id: number;
   numero: string;
+  clienteId: number;
   cliente: string;
   fecha: string;
   estado: EstadoPedido;
@@ -30,51 +36,49 @@ export type Pedido = {
   total: number;
 };
 
-export type NuevoPedido = Omit<
-  Pedido,
-  "id" | "numero" | "fecha" | "subtotal" | "iva" | "total"
->;
+export type NuevoPedido = {
+  clienteId: number;
+  cliente: string;
+  origen: string;
+  estado: EstadoPedido;
+  lineas: LineaPedido[];
+};
 
 type Props = {
   cerrar: () => void;
-  guardar: (pedido: NuevoPedido) => void;
+  guardar: (pedido: NuevoPedido) => Promise<boolean>;
 };
 
-const clientesDemo = [
-  "Muebles García",
-  "Sofás Martínez",
-  "Descanso Levante",
-  "Maderas del Sureste",
-];
+type ClienteApi = {
+  id: number;
+  nombre: string;
+  activo: boolean;
+};
 
-const productosDemo = [
-  {
-    referencia: "COL-001",
-    nombre: "Colchón Premium Visco",
-    precio: 499,
-  },
-  {
-    referencia: "ALM-001",
-    nombre: "Almohada Viscoelástica",
-    precio: 59.9,
-  },
-  {
-    referencia: "CAN-001",
-    nombre: "Canapé Abatible",
-    precio: 349,
-  },
-  {
-    referencia: "CAB-001",
-    nombre: "Cabecero Tapizado",
-    precio: 189,
-  },
-];
+type ProductoApi = {
+  id: number;
+  referencia: string;
+  nombre: string;
+  precio: string | number;
+  activo: boolean;
+};
+
+/* ==========================================================
+   COMPONENTE
+========================================================== */
 
 export default function NewOrderPanel({
   cerrar,
   guardar,
 }: Props) {
-  const [cliente, setCliente] = useState("");
+  const [clientes, setClientes] =
+    useState<ClienteApi[]>([]);
+
+  const [productos, setProductos] =
+    useState<ProductoApi[]>([]);
+
+  const [clienteId, setClienteId] =
+    useState<number | "">("");
 
   const [estado, setEstado] =
     useState<EstadoPedido>("Pendiente");
@@ -82,32 +86,116 @@ export default function NewOrderPanel({
   const [lineas, setLineas] =
     useState<LineaPedido[]>([]);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
+
+  const [cargandoDatos, setCargandoDatos] =
+    useState(true);
+
+  const [guardando, setGuardando] =
+    useState(false);
+
+  /* ==========================================================
+     CARGAR CLIENTES Y PRODUCTOS
+  ========================================================== */
+
+  useEffect(() => {
+    async function cargarDatos() {
+      try {
+        setCargandoDatos(true);
+
+        const [
+          respuestaClientes,
+          respuestaProductos,
+        ] = await Promise.all([
+          fetch(
+            "http://127.0.0.1:8000/api/clientes"
+          ),
+          fetch(
+            "http://127.0.0.1:8000/api/productos"
+          ),
+        ]);
+
+        if (
+          !respuestaClientes.ok ||
+          !respuestaProductos.ok
+        ) {
+          throw new Error(
+            "No se pudieron cargar los datos."
+          );
+        }
+
+        const datosClientes: ClienteApi[] =
+          await respuestaClientes.json();
+
+        const datosProductos: ProductoApi[] =
+          await respuestaProductos.json();
+
+        setClientes(
+          datosClientes.filter(
+            (cliente) => cliente.activo
+          )
+        );
+
+        setProductos(
+          datosProductos.filter(
+            (producto) => producto.activo
+          )
+        );
+      } catch (error) {
+        console.error(error);
+
+        setError(
+          "No se pudieron cargar los clientes o productos."
+        );
+      } finally {
+        setCargandoDatos(false);
+      }
+    }
+
+    cargarDatos();
+  }, []);
+
+  /* ==========================================================
+     AÑADIR PRODUCTO
+  ========================================================== */
 
   function añadirProducto() {
-    const producto = productosDemo[0];
+    if (productos.length === 0) {
+      setError(
+        "No hay productos activos disponibles."
+      );
+      return;
+    }
 
-    const nuevaLinea: LineaPedido = {
-      id: Date.now(),
-      producto: producto.nombre,
-      referencia: producto.referencia,
-      cantidad: 1,
-      precio: producto.precio,
-    };
+    const producto = productos[0];
 
     setLineas((actuales) => [
       ...actuales,
-      nuevaLinea,
+      {
+        id: Date.now(),
+        productoId: producto.id,
+        producto: producto.nombre,
+        referencia: producto.referencia,
+        cantidad: 1,
+        precio: Number(producto.precio),
+      },
     ]);
+
+    setError("");
   }
+
+  /* ==========================================================
+     CAMBIAR PRODUCTO
+  ========================================================== */
 
   function cambiarProducto(
     id: number,
-    referencia: string
+    productoId: number
   ) {
-    const producto = productosDemo.find(
+    const producto = productos.find(
       (producto) =>
-        producto.referencia === referencia
+        producto.id === productoId
     );
 
     if (!producto) return;
@@ -117,14 +205,22 @@ export default function NewOrderPanel({
         linea.id === id
           ? {
               ...linea,
+              productoId: producto.id,
               producto: producto.nombre,
-              referencia: producto.referencia,
-              precio: producto.precio,
+              referencia:
+                producto.referencia,
+              precio: Number(
+                producto.precio
+              ),
             }
           : linea
       )
     );
   }
+
+  /* ==========================================================
+     CANTIDAD
+  ========================================================== */
 
   function cambiarCantidad(
     id: number,
@@ -143,6 +239,10 @@ export default function NewOrderPanel({
     );
   }
 
+  /* ==========================================================
+     ELIMINAR LÍNEA
+  ========================================================== */
+
   function eliminarLinea(id: number) {
     setLineas((actuales) =>
       actuales.filter(
@@ -151,21 +251,30 @@ export default function NewOrderPanel({
     );
   }
 
+  /* ==========================================================
+     TOTALES
+  ========================================================== */
+
   const subtotal = lineas.reduce(
     (total, linea) =>
-      total + linea.precio * linea.cantidad,
+      total +
+      linea.precio * linea.cantidad,
     0
   );
 
   const iva = subtotal * 0.21;
   const total = subtotal + iva;
 
-  function enviarFormulario(
+  /* ==========================================================
+     GUARDAR
+  ========================================================== */
+
+  async function enviarFormulario(
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    if (!cliente) {
+    if (!clienteId) {
       setError(
         "Debes seleccionar un cliente."
       );
@@ -179,14 +288,42 @@ export default function NewOrderPanel({
       return;
     }
 
-    guardar({
-      cliente,
-      estado,
-      origen: "Pedido manual",
-      lineas,
-    });
+    const cliente = clientes.find(
+      (cliente) =>
+        cliente.id === clienteId
+    );
 
-    cerrar();
+    if (!cliente) {
+      setError(
+        "No se ha encontrado el cliente seleccionado."
+      );
+      return;
+    }
+
+    try {
+      setGuardando(true);
+      setError("");
+
+      const correcto = await guardar({
+        clienteId,
+        cliente: cliente.nombre,
+        origen: "Pedido manual",
+        estado,
+        lineas,
+      });
+
+      if (correcto) {
+        cerrar();
+      }
+    } catch (error) {
+      console.error(error);
+
+      setError(
+        "No se pudo guardar el pedido."
+      );
+    } finally {
+      setGuardando(false);
+    }
   }
 
   return (
@@ -219,7 +356,8 @@ export default function NewOrderPanel({
           <button
             type="button"
             onClick={cerrar}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-[#F5F7F7] text-lg text-slate-500"
+            disabled={guardando}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-[#F5F7F7] text-lg text-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             ×
           </button>
@@ -244,7 +382,7 @@ export default function NewOrderPanel({
 
             {/* DATOS GENERALES */}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
 
               <div>
 
@@ -253,26 +391,31 @@ export default function NewOrderPanel({
                 </label>
 
                 <select
-                  value={cliente}
+                  value={clienteId}
+                  disabled={cargandoDatos}
                   onChange={(event) =>
-                    setCliente(
+                    setClienteId(
                       event.target.value
+                        ? Number(
+                            event.target.value
+                          )
+                        : ""
                     )
                   }
-                  className="h-11 w-full rounded-xl border border-slate-300 bg-[#F5F7F7] px-3 text-sm text-slate-700 outline-none focus:border-[#0F766E]"
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-[#F5F7F7] px-3 text-sm text-slate-700 outline-none focus:border-[#0F766E] disabled:opacity-60"
                 >
 
                   <option value="">
                     Seleccionar cliente
                   </option>
 
-                  {clientesDemo.map(
+                  {clientes.map(
                     (cliente) => (
                       <option
-                        key={cliente}
-                        value={cliente}
+                        key={cliente.id}
+                        value={cliente.id}
                       >
-                        {cliente}
+                        {cliente.nombre}
                       </option>
                     )
                   )}
@@ -310,6 +453,21 @@ export default function NewOrderPanel({
 
               </div>
 
+              <div>
+
+                <label className="mb-2 block text-xs font-semibold text-slate-600">
+                  Origen
+                </label>
+
+                <input
+                  type="text"
+                  value="Pedido manual"
+                  readOnly
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 text-sm text-slate-500 outline-none"
+                />
+
+              </div>
+
             </div>
 
             {/* PRODUCTOS */}
@@ -331,7 +489,11 @@ export default function NewOrderPanel({
                 <button
                   type="button"
                   onClick={añadirProducto}
-                  className="rounded-lg bg-[#BFEDE7] px-3 py-2 text-xs font-bold text-[#0F766E] transition hover:bg-[#A8E4DC]"
+                  disabled={
+                    cargandoDatos ||
+                    productos.length === 0
+                  }
+                  className="rounded-lg bg-[#BFEDE7] px-3 py-2 text-xs font-bold text-[#0F766E] transition hover:bg-[#A8E4DC] disabled:opacity-50"
                 >
                   + Añadir producto
                 </button>
@@ -372,25 +534,23 @@ export default function NewOrderPanel({
                         </label>
 
                         <select
-                          value={linea.referencia}
+                          value={linea.productoId}
                           onChange={(event) =>
                             cambiarProducto(
                               linea.id,
-                              event.target.value
+                              Number(
+                                event.target.value
+                              )
                             )
                           }
                           className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700"
                         >
 
-                          {productosDemo.map(
+                          {productos.map(
                             (producto) => (
                               <option
-                                key={
-                                  producto.referencia
-                                }
-                                value={
-                                  producto.referencia
-                                }
+                                key={producto.id}
+                                value={producto.id}
                               >
                                 {producto.nombre}
                               </option>
@@ -504,16 +664,20 @@ export default function NewOrderPanel({
             <button
               type="button"
               onClick={cerrar}
-              className="rounded-xl border border-slate-300 bg-[#F5F7F7] px-4 py-2.5 text-sm font-semibold text-slate-600"
+              disabled={guardando}
+              className="rounded-xl border border-slate-300 bg-[#F5F7F7] px-4 py-2.5 text-sm font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancelar
             </button>
 
             <button
               type="submit"
-              className="rounded-xl bg-[#0F766E] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#115E59]"
+              disabled={guardando}
+              className="rounded-xl bg-[#0F766E] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#115E59] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Crear pedido
+              {guardando
+                ? "Guardando..."
+                : "Crear pedido"}
             </button>
 
           </div>
